@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent 模板(手动安装方式使用)
+  使用前把 <SCRIPT_PATH> 替换为 autologin.sh 的绝对路径,
+  例如 /Users/你的用户名/Library/Application Support/SZUAutoLogin/autologin.sh
+  然后:
+    cp com.autologin.plist.template ~/Library/LaunchAgents/com.szu.autologin.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
+  注意: ProgramArguments 第一项必须是 /bin/bash(见 README"已知坑"第 5 条)。
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.szu.autologin</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>&lt;SCRIPT_PATH&gt;</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>45</integer>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
