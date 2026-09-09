@@ -16,7 +16,7 @@ TEACH_SSIDS=("SZU_WLAN" "SZU-WLAN")         # 教学区 WiFi 名(多种拼写都
 # --- 认证接口 ---
 DORM_PORTAL_URL="http://172.30.255.42:801/eportal/portal/login"   # 宿舍区新版 eportal 接口
 SRUN_BASE="https://net.szu.edu.cn"          # 教学区深澜(Srun)认证服务器
-SRUN_AC_ID="12"                             # 深澜 ac_id 参数(社区实测值;登录失败可抓包核对)
+SRUN_AC_ID="12"                             # 深澜 ac_id 仅作兜底;v1.0.1 起登录前自动抓取真实值(实测 8)
 
 # --- 区域识别辅助 ---
 # IP 网段前缀是第二级快速判断;不确定就留空 "",会自动走第三级服务器探测。

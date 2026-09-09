@@ -1,6 +1,11 @@
 #!/bin/bash
 # ============================================================
-# szu-net-autologin · 深大校园网断网自动重连脚本 v1.0.0
+# szu-net-autologin · 深大校园网断网自动重连脚本 v1.0.1
+# v1.0.1(2026-09-09): ①教学区 ac_id 动态获取(实测深大当前为 8,
+#   旧版写死 12 → 服务器回空、反复"无返回信息");②区域识别防抖
+#   (宿舍/教学两台认证服务器互相可达 + 深澜离线也返回 not_online_error
+#   → 旧探测法把宿舍误判教学区),新增"网关不变沿用上次区域"缓存;
+#   ③补宿舍网段实测值 172.24.*。间隔等调度参数在 plist/launchd 设置。
 # https://github.com/<你的用户名>/szu-net-autologin
 #
 # 由 macOS LaunchAgent 定时调度(默认每 45 秒);检测到断网时
@@ -44,13 +49,14 @@ WIRED_MODE=1                                # 1=插网线(未连WiFi)时按宿�
 CHECK_URL="https://www.baidu.com"           # 在线检测地址
 DORM_PORTAL_URL="http://172.30.255.42:801/eportal/portal/login"   # 宿舍区新版认证接口
 SRUN_BASE="https://net.szu.edu.cn"          # 教学区深澜认证服务器
-SRUN_AC_ID="12"                             # 教学区接入控制器 id(社区实测值;若登录失败可抓包核对)
+SRUN_AC_ID="12"                             # 仅作解析失败的兜底;v1.0.1 起登录前会自动抓取
+                                            # 真实 ac_id(实测深大当前为 8,不同区域可能不同)
 KC_SERVICE="szu-portal"                     # 钥匙串凭据服务名(勿改)
 LOG_FILE="$HOME/Library/Logs/szu-autologin.log"
 STATE_DIR="$HOME/Library/Application Support/SZUAutoLogin"
 LOGIN_COOLDOWN=100                          # 两次登录尝试最小间隔(秒)
-TEACH_NET_PREFIX="172.26."                  # 教学区 IP 网段前缀(实测值)
-DORM_NET_PREFIX=""                          # 宿舍区 IP 网段前缀(待回宿舍采集后填写)
+TEACH_NET_PREFIX="172.26."                  # 教学区 IP 网段前缀(实测:图书馆 172.26.*)
+DORM_NET_PREFIX="172.24."                   # 宿舍区 IP 网段前缀(实测:宿舍 172.24.*,网关 .0.1)
 DEBUG_NET=0                                 # 1=每轮记录 ssid/ip/zone 调试日志(排障用,平时保持 0)
 
 # ---- 可选配置文件 ----
@@ -90,38 +96,77 @@ in_list() {
 }
 
 # 判断当前所在区域: dorm / teach / none
-# 三级判断(由快到慢):
-#   ① SSID 能读到且匹配 → 直接认区(零开销)
-#   ② IP 网段前缀匹配   → 认区(零开销,覆盖已知网段)
-#   ③ 探测认证服务器    → 谁应答就是哪个区(约 1~3 秒,
-#      不依赖 IP/SSID/楼栋位置,v2.5 新增的兜底)
+# 四级判断(由快到慢,前三级零网络开销):
+#   ① SSID 能读到且匹配   → 直接认区
+#   ② IP 网段前缀匹配     → 直接认区(实测: 宿舍 172.24.* / 教学 172.26.*)
+#   ③ 区域缓存(v1.0.1)   → 网关没变,沿用上次认出的区,防止探测"翻烙饼"
+#   ④ 探测认证服务器      → 见函数内注释(v1.0.1 修正判定顺序)
+gw_addr() {
+  route -n get default 2>/dev/null | awk '/gateway/{print $2; exit}'
+}
+
+zone_cache_save() {  # $1=dorm|teach,连同当前网关写入缓存
+  local gw; gw="$(gw_addr)"
+  [[ -z "$gw" || -z "$1" ]] && return 1
+  printf '%s\n%s\n' "$1" "$gw" > "$STATE_DIR/.zone_cache" 2>/dev/null
+}
+
+zone_cache_get() {   # 网关未变且缓存有效 → 回显缓存区域;否则无输出
+  local gw cur
+  gw="$(gw_addr)"; [[ -z "$gw" ]] && return 1
+  cur="$(sed -n 1p "$STATE_DIR/.zone_cache" 2>/dev/null)"
+  if [[ "$(sed -n 2p "$STATE_DIR/.zone_cache" 2>/dev/null)" == "$gw" ]] \
+     && { [[ "$cur" == "dorm" || "$cur" == "teach" ]]; }; then
+    echo "$cur"; return 0
+  fi
+  return 1
+}
+
 zone_detect() {
-  local ssid ip
+  local ssid ip zone state dormok teachok
   ssid="$(wifi_ssid)"
   # macOS 隐私保护会把 SSID 替换为 <redacted>,视同"读不到"
   [[ "$ssid" == *edacted* ]] && ssid=""
   if [[ -n "$ssid" ]]; then
-    in_list "$ssid" "${DORM_SSIDS[@]}" && { echo "dorm"; return; }
-    in_list "$ssid" "${TEACH_SSIDS[@]}" && { echo "teach"; return; }
+    in_list "$ssid" "${DORM_SSIDS[@]}" && { zone_cache_save dorm; echo "dorm"; return; }
+    in_list "$ssid" "${TEACH_SSIDS[@]}" && { zone_cache_save teach; echo "teach"; return; }
   fi
   ip="$(ipconfig getifaddr en0 2>/dev/null)"
   if [[ -n "$ip" ]]; then
-    [[ -n "$TEACH_NET_PREFIX" && "$ip" == "$TEACH_NET_PREFIX"* ]] && { echo "teach"; return; }
-    [[ -n "$DORM_NET_PREFIX" && "$ip" == "$DORM_NET_PREFIX"* ]] && { echo "dorm"; return; }
+    [[ -n "$DORM_NET_PREFIX" && "$ip" == "$DORM_NET_PREFIX"* ]] && { zone_cache_save dorm; echo "dorm"; return; }
+    [[ -n "$TEACH_NET_PREFIX" && "$ip" == "$TEACH_NET_PREFIX"* ]] && { zone_cache_save teach; echo "teach"; return; }
   fi
-  # ③ 探测兜底(v2.5): 依次询问两台认证服务器(仅校内可达,
-  #    校外/热点环境两者都不应答,不会误判)
-  local state
-  state="$(curl -sk -m 3 "$SRUN_BASE/cgi-bin/rad_user_info" 2>/dev/null)"
-  [[ -n "$state" ]] && { echo "teach"; return; }
-  if curl -s -m 3 -o /dev/null "http://172.30.255.42:801/" 2>/dev/null; then
+  zone="$(zone_cache_get)"
+  [[ -n "$zone" ]] && { echo "$zone"; return; }
+  # ④ 探测兜底(v1.0.1 修正): 实测宿舍网络能同时访问两台认证服务器,
+  #    且深澜状态接口在"未登录"时也返回 not_online_error(非空),
+  #    旧版把"任何应答都当教学区"→ 宿舍被误判教学区。修正顺序:
+  #    a. 深澜返回在线会话内容(非空且非 not_online_error) → 教学区;
+  #    b. 宿舍可达且深澜不可达 → 宿舍区;  c. 深澜可达且宿舍不可达 → 教学区;
+  #    d. 两者都可达 → 按宿舍区处理(实测宿舍网内两台都通);
+  #    e. 都不可达   → 不在校园网(有线场景按 WIRED_MODE 兜底)。
+  state="$(curl -sk -m 4 "$SRUN_BASE/cgi-bin/rad_user_info" 2>/dev/null)"
+  if [[ -n "$state" && "$state" != *not_online_error* ]]; then
+    zone_cache_save teach; echo "teach"; return
+  fi
+  teachok=0; [[ -n "$state" ]] && teachok=1
+  if curl -s -m 4 -o /dev/null "http://172.30.255.42:801/" 2>/dev/null; then
+    dormok=1; else dormok=0
+  fi
+  if [[ "$dormok" == 1 && "$teachok" == 0 ]]; then
+    zone_cache_save dorm; echo "dorm"; return
+  fi
+  if [[ "$dormok" == 0 && "$teachok" == 1 ]]; then
+    zone_cache_save teach; echo "teach"; return
+  fi
+  if [[ "$dormok" == 1 ]]; then
     echo "dorm"; return
   fi
-  [[ "${DEBUG_NET:-0}" == "1" && -n "$ip" ]] && \
-    log_line "DEBUG 三级探测均未应答,判定不在校园网 ip=[${ip}]"
   if [[ "$WIRED_MODE" == "1" ]] && has_default_route; then
     echo "dorm"; return    # 有线按宿舍区处理(教学区有线属教工区,不在本脚本范围)
   fi
+  [[ "${DEBUG_NET:-0}" == "1" && -n "$ip" ]] && \
+    log_line "DEBUG 区域探测未决 ip=[${ip}]"
   echo "none"
 }
 
@@ -170,6 +215,7 @@ login_dorm() {
     --data-urlencode "v=10353" 2>/dev/null)"
   if printf '%s' "$resp" | grep -qE '"result"[[:space:]]*:[[:space:]]*1|已经在线|认证成功'; then
     log_line "网页自动登录成功(宿舍区)"
+    zone_cache_save dorm
     return 0
   else
     log_line "网页自动登录失败(宿舍区): $(printf '%s' "$resp" | tr -d '\n' | head -c 200)"
@@ -304,6 +350,17 @@ sr_base64() {
   echo "$output_string"
 }
 
+# v1.0.1: 动态获取教学区当次 ac_id(不同区域/接入控制器值可能不同,
+# 实测深大当前为 8;登录页通常带 ac_id=N,抓不到才回落配置默认值)
+teach_ac_id() {
+  local ac
+  ac="$(curl -sk -L -m 6 "$SRUN_BASE/" 2>/dev/null | grep -oE 'ac_id=[0-9]+' | head -1 | cut -d= -f2)"
+  [[ -z "$ac" ]] && \
+    ac="$(curl -sk -L -m 6 "$SRUN_BASE/index_8.html" 2>/dev/null | grep -oE 'ac_id=[0-9]+' | head -1 | cut -d= -f2)"
+  [[ -z "$ac" ]] && ac="$SRUN_AC_ID"
+  echo "$ac"
+}
+
 login_teach() {
   # ① 深澜自带的在线状态接口:not_online_error 才需要登录
   local state
@@ -328,12 +385,13 @@ login_teach() {
     return 1
   fi
 
-  # ③④⑤ 按深澜协议构造加密参数
-  local enc_pwd info chkstr
+  # ③④⑤ 按深澜协议构造加密参数(v1.0.1: ac_id 用动态获取值)
+  local enc_pwd info chkstr ac_id
+  ac_id="$(teach_ac_id)"
   enc_pwd="$(sr_md5 "$pass" "$token")"
-  info="{\"username\":\"${cid}\",\"password\":\"${pass}\",\"ip\":\"${ip_addr}\",\"acid\":\"${SRUN_AC_ID}\",\"enc_ver\":\"srun_bx1\"}"
+  info="{\"username\":\"${cid}\",\"password\":\"${pass}\",\"ip\":\"${ip_addr}\",\"acid\":\"${ac_id}\",\"enc_ver\":\"srun_bx1\"}"
   info="{SRBX1}$(sr_base64 $(sr_encode "$info" "$token"))"
-  chkstr="$(sr_sha1 "${token}${cid}${token}${enc_pwd}${token}${SRUN_AC_ID}${token}${ip_addr}${token}200${token}1${token}${info}")"
+  chkstr="$(sr_sha1 "${token}${cid}${token}${enc_pwd}${token}${ac_id}${token}${ip_addr}${token}200${token}1${token}${info}")"
 
   # ⑥ 提交登录
   local resp
@@ -344,13 +402,14 @@ login_teach() {
     -d "password={MD5}${enc_pwd}" \
     -d "chksum=${chkstr}" \
     --data-urlencode "info=${info}" \
-    -d "ac_id=${SRUN_AC_ID}" \
+    -d "ac_id=${ac_id}" \
     -d "ip=${ip_addr}" \
     -d "n=200" \
     -d "type=1" 2>/dev/null)"
   res="$(echo "$resp" | grep -o '"res":"[^"]*' | awk -F'"' '{print $4}')"
   if [[ "$res" == "ok" ]]; then
     log_line "网页自动登录成功(教学区)"
+    zone_cache_save teach
     return 0
   fi
   local errmsg
