@@ -1,69 +1,94 @@
 #!/bin/bash
 # ============================================================
-# szu-net-autologin · 深大校园网断网自动重连脚本 v1.0.1
-# v1.0.1(2026-09-09): ①教学区 ac_id 动态获取(实测深大当前为 8,
-#   旧版写死 12 → 服务器回空、反复"无返回信息");②区域识别防抖
-#   (宿舍/教学两台认证服务器互相可达 + 深澜离线也返回 not_online_error
-#   → 旧探测法把宿舍误判教学区),新增"网关不变沿用上次区域"缓存;
-#   ③补宿舍网段实测值 172.24.*。间隔等调度参数在 plist/launchd 设置。
-# https://github.com/<你的用户名>/szu-net-autologin
+# 深大校园网网页自动登录脚本 v2.8(宿舍区 + 教学区双区通用版)
+# 由 LaunchAgent 定时调度(间隔在 plist 中设置,默认 45 秒;检测到
+# 断网时按当前所在区域自动选择对应认证接口,模拟网页登录。全程不
+# 依赖任何客户端、不打开任何窗口;凭据存放在 macOS 钥匙串。
 #
-# 由 macOS LaunchAgent 定时调度(默认每 45 秒);检测到断网时
-# 按当前所在区域自动选择认证接口,模拟网页登录。全程不依赖
-# 任何客户端、不打开任何窗口;凭据存放在 macOS 钥匙串。
+# v2.8 变更(2026-09-09 晚实测定论"注销后登录失败"根因):
+#   注销后接入控制器会丢弃发往认证服务器(172.31.63.36)的直连
+#   请求(HTTP 80 / HTTPS 443 双双超时返回空,诊断日志实测),而
+#   浏览器能打开登录页是因为走了网关的透明 302 重定向通道。现让
+#   脚本模仿浏览器: HTTPS 直连失败时,先向公网 HTTP 地址发探测,
+#   从网关返回的 Location 头提取真实可用的门户入口,再用该入口
+#   完成 challenge + 登录(入口全程一致)。v2.7.1/v2.7.2 的诊断
+#   日志(原始返回/DNS/ac_id)保留。
+# v2.7 变更(2026-09-09 实测定位"无返回信息"真凶):
+#   ① 修复 sr_md5/sr_sha1 取列错误: macOS LibreSSL 的 openssl
+#      md5/sha1 直接输出纯哈希(无 "(stdin)= " 前缀),原 awk
+#      '{print $2}' 取不到 → 密码摘要与校验和恒为空 → 服务器
+#      收到空参数直接返回 0 字节(即长期以来的"无返回信息")。
+#      改为 awk '{print $NF}' 兼容两种输出格式。
+#   ② 修复 sr_base64 映射失效: 原逐字符用 expr index 查表,
+#      但本机 expr 为 GNU 版(不支持 index)→ 映射全部失败、
+#      info 密文恒为 "====…"。改为 tr 双字符集整串映射。
+#   ③ login_teach 状态判定放宽: 状态接口空响应(接口抽风但外网
+#      已确认不通)时不再误判"已在线跳过",而是尝试登录兜底。
+# v2.6 变更(2026-09-09 实测修复):
+#   ① ac_id 动态获取: 教学区登录前先抓真实登录页解析当次 ac_id
+#      (实测深大当前为 8,旧版写死社区值 12 → 服务器回空、反复
+#      "无返回信息");解析失败才回落配置值。
+#   ② 区域识别防"翻烙饼": 实测宿舍网络能同时访问教学+宿舍两台
+#      认证服务器,且深澜状态接口离线时也返回 not_online_error
+#      (非空)→ v2.5 探测法把宿舍误判教学区(15:47 dorm ↔ 15:48
+#      teach)。现修正判定顺序,并新增"网关未变沿用上次区域"缓存;
+#   ③ 补宿舍网段实测值 172.24.*(网关 172.24.0.1)。
+# v2.5 变更(服务器探测兜底): v2.4 依赖单一 IP 网段(172.26.*)
+#   识别教学区,但不同教学楼/汇聚区可能分配不同网段,换楼即失灵。
+#   现增加第三级判断: IP 网段不匹配时,直接探测"哪台认证服务器
+#   应答"(教学 net.szu.edu.cn / 宿舍 172.30.255.42,均仅校内可达)
+#   —— 与所在楼栋、IP 段无关,任何位置都能正确认区。
+# v2.4 变更(IP 网段识别区域): macOS 隐私保护会向无定位权限的
+#   程序隐藏 WiFi 名(SSID 返回字面量 <redacted>,networksetup
+#   则谎称未连接),导致 v2.2/v2.3 均无法识别区域。现改为:
+#   ① SSID 能读到且匹配 → 仍按 SSID 判断;
+#   ② SSID 被脱敏/读不到 → 按 IP 网段判断(教学区 172.26.*,
+#      宿舍区网段待回家后从日志采集再补充 DORM_NET_PREFIX);
+#   ③ 仍判不出 → 有线兜底(按宿舍区)。
+# v2.3 变更(SSID 读取加固): 修复中文系统下 networksetup 输出
+#   为"当前 Wi-Fi 网络"导致 SSID 解析失败、区域误判为宿舍区的
+#   bug —— 改以 ipconfig getsummary 读取(键名固定英文),并以
+#   兼容中英文的 networksetup 解析兜底。
+# v2.2 变更(区域化探针): 在线检测不再一律访问公网(百度),
+#   改为按区域询问各自的认证服务器——更快、不占公网出口、更准:
+#   宿舍区  外网探针失败时,先确认能连通宿舍认证服务器再登录,
+#           避免认证服务器临时不可达时做无意义的登录尝试;
+#   教学区  直接用深澜自带状态接口 rad_user_info 判断在线与否,
+#           仅当该接口连不上时才退回公网探针作为兜底。
 #
-# 区域识别(三级,由快到慢,见 zone_detect 函数):
-#   ① SSID 匹配      → 直接认区(零开销)
-#   ② IP 网段匹配    → 认区(零开销,覆盖已知网段)
-#   ③ 探测认证服务器 → 谁应答就是哪个区(约 1~3 秒,
-#      不依赖 SSID/IP/楼栋位置;两台服务器均仅校内可达)
-#
-# 为什么不只用 SSID?两个 macOS 的坑(详见 README"已知坑"):
-#   · 隐私保护:无定位权限的程序读 SSID 会得到假数据
-#     (ipconfig 返回字面量 <redacted>,networksetup 谎称未连接);
-#   · networksetup 输出随系统语言变化(中文系统输出
-#     "当前 Wi-Fi 网络"),精确匹配英文前缀会解析失败。
-#
-# 区域路由(默认适配深圳大学,可在 config.sh 中覆盖全部参数):
+# 区域路由:
 #   宿舍区  SZU_CTC&CMCC(或有线) → 新版 eportal 接口
 #           (GET http://172.30.255.42:801/eportal/portal/login)
 #   教学区  SZU_WLAN / SZU-WLAN   → 深澜 Srun 接口
 #           (https://net.szu.edu.cn/cgi-bin/srun_portal)
-#           注: 深大教学区 2025 年 1 月起为深澜系统,登录需
-#               challenge + HMAC-MD5 + XXTEA + 自定义 base64
+#           注: 教学区 2025 年 1 月已由旧版 Dr.COM 升级为深澜系统,
+#               登录需 challenge + HMAC-MD5 + XXTEA + 自定义 base64
 #               + SHA1 五道工序,本文件已内置完整实现。
 #   其他网络 → 不动作
 #
-# 解释器说明: 必须以 /bin/bash(macOS 自带 3.2 版)运行——
-#   加密函数依赖 bash 数组语义;LaunchAgent 的
-#   ProgramArguments 也应写 /bin/bash 而非 /bin/zsh。
+# 解释器说明: 使用 /bin/bash(macOS 自带 3.2 版),因为加密函数
+#   依赖 bash 数组语义;请勿改回 zsh。
 #
 # 致谢: 教学区深澜协议实现参考 SoY0ung/SZU-SRUN (GitHub);
 #       宿舍区 eportal 协议参考 ceynri/szu-network-connecter (MIT)。
 # ============================================================
 
-# ---- 可调参数(均可在脚本同目录的 config.sh 中覆盖,勿直接改本文件) ----
+# ---- 可调参数 ----
 DORM_SSIDS=("SZU_CTC&CMCC")                 # 宿舍区 WiFi 名(按实际显示名修改)
 TEACH_SSIDS=("SZU_WLAN" "SZU-WLAN")         # 教学区 WiFi 名(两种常见拼写都试)
 WIRED_MODE=1                                # 1=插网线(未连WiFi)时按宿舍区处理;0=仅WiFi
 CHECK_URL="https://www.baidu.com"           # 在线检测地址
 DORM_PORTAL_URL="http://172.30.255.42:801/eportal/portal/login"   # 宿舍区新版认证接口
 SRUN_BASE="https://net.szu.edu.cn"          # 教学区深澜认证服务器
-SRUN_AC_ID="12"                             # 仅作解析失败的兜底;v1.0.1 起登录前会自动抓取
-                                            # 真实 ac_id(实测深大当前为 8,不同区域可能不同)
+SRUN_AC_ID="18"                              # 教学区接入控制器 id(仅作解析失败的兜底;
+                                             # 实测当前为 18,该值可能随接入控制器变化)
 KC_SERVICE="szu-portal"                     # 钥匙串凭据服务名(勿改)
 LOG_FILE="$HOME/Library/Logs/szu-autologin.log"
 STATE_DIR="$HOME/Library/Application Support/SZUAutoLogin"
 LOGIN_COOLDOWN=100                          # 两次登录尝试最小间隔(秒)
 TEACH_NET_PREFIX="172.26."                  # 教学区 IP 网段前缀(实测:图书馆 172.26.*)
 DORM_NET_PREFIX="172.24."                   # 宿舍区 IP 网段前缀(实测:宿舍 172.24.*,网关 .0.1)
-DEBUG_NET=0                                 # 1=每轮记录 ssid/ip/zone 调试日志(排障用,平时保持 0)
-
-# ---- 可选配置文件 ----
-# 安装目录下的 config.sh 可覆盖以上任何参数(格式见 config.example.sh),
-# 升级脚本时替换 autologin.sh 即可,你的自定义配置不受影响。
-CONFIG_FILE="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/config.sh"
-[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+DEBUG_NET=1                                 # 1=在校园网时每轮记录 ssid/ip/zone 调试日志(排障完改 0)
 
 # ---- 基础函数 ----
 log_line() {
@@ -99,8 +124,8 @@ in_list() {
 # 四级判断(由快到慢,前三级零网络开销):
 #   ① SSID 能读到且匹配   → 直接认区
 #   ② IP 网段前缀匹配     → 直接认区(实测: 宿舍 172.24.* / 教学 172.26.*)
-#   ③ 区域缓存(v1.0.1)   → 网关没变,沿用上次认出的区,防止探测"翻烙饼"
-#   ④ 探测认证服务器      → 见函数内注释(v1.0.1 修正判定顺序)
+#   ③ 区域缓存(v2.6)     → 网关没变,沿用上次认出的区,防止探测"翻烙饼"
+#   ④ 探测认证服务器      → 见函数内注释(v2.6 修正判定顺序,见下)
 gw_addr() {
   route -n get default 2>/dev/null | awk '/gateway/{print $2; exit}'
 }
@@ -138,11 +163,13 @@ zone_detect() {
   fi
   zone="$(zone_cache_get)"
   [[ -n "$zone" ]] && { echo "$zone"; return; }
-  # ④ 探测兜底(v1.0.1 修正): 实测宿舍网络能同时访问两台认证服务器,
+  # ④ 探测兜底(v2.6 修正): 实测宿舍网络能同时访问两台认证服务器,
   #    且深澜状态接口在"未登录"时也返回 not_online_error(非空),
-  #    旧版把"任何应答都当教学区"→ 宿舍被误判教学区。修正顺序:
-  #    a. 深澜返回在线会话内容(非空且非 not_online_error) → 教学区;
-  #    b. 宿舍可达且深澜不可达 → 宿舍区;  c. 深澜可达且宿舍不可达 → 教学区;
+  #    v2.5 把"任何应答都当教学区"→ 宿舍被误判教学区。修正顺序:
+  #    a. 深澜返回的是在线会话内容(非空且非 not_online_error)
+  #       → 教学区(只有教学 NAS 上才有会话);
+  #    b. 宿舍认证服务器可达且深澜不可达 → 宿舍区;
+  #    c. 深澜可达且宿舍不可达          → 教学区;
   #    d. 两者都可达 → 按宿舍区处理(实测宿舍网内两台都通);
   #    e. 都不可达   → 不在校园网(有线场景按 WIRED_MODE 兜底)。
   state="$(curl -sk -m 4 "$SRUN_BASE/cgi-bin/rad_user_info" 2>/dev/null)"
@@ -229,11 +256,11 @@ login_dorm() {
 #       ⑤ 全参数 SHA1 校验和 → ⑥ 提交登录
 
 sr_md5() {  # $1=内容 $2=密钥 → HMAC-MD5
-  echo -n "$1" | openssl md5 -hmac "$2" | awk '{print $2}'
+  echo -n "$1" | openssl md5 -hmac "$2" | awk '{print $NF}'
 }
 
 sr_sha1() { # $1=内容 → SHA1
-  echo -n "$1" | openssl sha1 | awk '{print $2}'
+  echo -n "$1" | openssl sha1 | awk '{print $NF}'
 }
 
 # 字符串 → 32 位整数数组(每 4 字节合并,小端;addLen=true 时末尾附加长度)
@@ -339,63 +366,85 @@ sr_base64() {
   base64_encoded=$(echo -n "$hex_string" | xxd -r -p | base64 | tr -d '\n')
   local mapping="LVoJPiCN2R8G90yg+hmFHuacZ1OWMnrsSTXkYpUq/3dlbfKwv6xztjI7DeBE45QA="
   local original="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
-  local output_string=""
-  local i char index new_char
-  for (( i = 0; i < ${#base64_encoded}; i++ )); do
-    char="${base64_encoded:$i:1}"
-    index=$(expr index "$original" "$char")
-    new_char="${mapping:index-1:1}"
-    output_string+="$new_char"
-  done
-  echo "$output_string"
+  # v2.7 修复: 原逐字符 expr index 查表在本机 GNU expr 不可用,
+  # 映射全部失效(密文变 "====…")。改 tr 双字符集整串映射。
+  echo "$base64_encoded" | tr "$original" "$mapping"
 }
 
-# v1.0.1: 动态获取教学区当次 ac_id(不同区域/接入控制器值可能不同,
-# 实测深大当前为 8;登录页通常带 ac_id=N,抓不到才回落配置默认值)
+# v2.8: 动态获取教学区当次 ac_id(不同区域/接入控制器值可能不同,
+# 实测当前为 18;登录页通常带 ac_id=N,抓不到才回落配置默认值)。
+# 可传入门户入口 $1:注销后直连 SRUN_BASE 被控制器丢弃时,改从
+# 网关重定向探测到的真实入口抓取。
 teach_ac_id() {
-  local ac
-  ac="$(curl -sk -L -m 6 "$SRUN_BASE/" 2>/dev/null | grep -oE 'ac_id=[0-9]+' | head -1 | cut -d= -f2)"
+  local base="${1:-$SRUN_BASE}" ac
+  ac="$(curl -sk -L -m 6 "$base/" 2>/dev/null | grep -oE 'ac_id=[0-9]+' | head -1 | cut -d= -f2)"
   [[ -z "$ac" ]] && \
-    ac="$(curl -sk -L -m 6 "$SRUN_BASE/index_8.html" 2>/dev/null | grep -oE 'ac_id=[0-9]+' | head -1 | cut -d= -f2)"
+    ac="$(curl -sk -L -m 6 "$base/index_8.html" 2>/dev/null | grep -oE 'ac_id=[0-9]+' | head -1 | cut -d= -f2)"
   [[ -z "$ac" ]] && ac="$SRUN_AC_ID"
   echo "$ac"
 }
 
 login_teach() {
-  # ① 深澜自带的在线状态接口:not_online_error 才需要登录
+  # ① 深澜自带的在线状态接口:not_online_error 才需要登录;
+  #    v2.7: 状态接口空响应(接口抽风)但能走到这里=外网已确认
+  #    不通,同样值得尝试登录,不再误判"已在线"漏登。
   local state
   state="$(curl -sk -m 8 "$SRUN_BASE/cgi-bin/rad_user_info" 2>/dev/null)"
-  if [[ "$state" != "not_online_error" ]]; then
+  if [[ -n "$state" && "$state" != "not_online_error" ]]; then
     log_line "教学区检测显示已在线(可能仅外网检测误报),跳过登录"
     return 0
   fi
 
   # ② 取 challenge(加密令牌 + 本机 IP)
+  # v2.8: 注销后控制器丢弃发往认证服务器的直连请求(HTTP/HTTPS 双
+  # 超时,2026-09-09 实测),但浏览器靠网关透明 302 重定向到达门户。
+  # 脚本照搬浏览器: HTTPS 直连失败 → 向公网 HTTP 地址发探测 → 从
+  # Location 头提取真实可用门户入口 → 用该入口完成后续登录。
   local callback token ip_addr res
   callback="$(date +%Y%m%d_%H%M%S)"
-  local challenge
-  challenge="$(curl -sk -m 8 -G "$SRUN_BASE/cgi-bin/get_challenge" \
+  local challenge portal_origin="$SRUN_BASE"
+  challenge="$(curl -sk -m 6 -G "$portal_origin/cgi-bin/get_challenge" \
     --data-urlencode "callback=$callback" \
     -d "username=${cid}" 2>/dev/null)"
+  if [[ -z "$challenge" ]]; then
+    # 网关重定向探测: 未认证时任意 HTTP 请求会被 302 到门户
+    local loc portal_new
+    loc="$(curl -s -m 6 -D - -o /dev/null 'http://www.msftconnecttest.com/connecttest.txt' 2>/dev/null \
+      | grep -i '^location:' | head -1 | awk '{print $2}' | tr -d '\r')"
+    portal_new="$(echo "$loc" | grep -oE '^https?://[^/]+' | head -1)"
+    if [[ -n "$portal_new" && "$portal_new" != "$portal_origin" ]]; then
+      portal_origin="$portal_new"
+    else
+      portal_origin="http://net.szu.edu.cn"
+    fi
+    log_line "  [门户探测] 直连超时,改用网关重定向入口: ${portal_origin:-未获取到}"
+    challenge="$(curl -sk -m 8 -G "$portal_origin/cgi-bin/get_challenge" \
+      --data-urlencode "callback=$callback" \
+      -d "username=${cid}" 2>/dev/null)"
+  fi
   token="$(echo "$challenge" | grep -o '"challenge":"[^"]*' | awk -F'"' '{print $4}')"
   ip_addr="$(echo "$challenge" | grep -o '"client_ip":"[^"]*' | awk -F'"' '{print $4}')"
   res="$(echo "$challenge" | grep -o '"res":"[^"]*' | awk -F'"' '{print $4}')"
   if [[ "$res" != "ok" || -z "$token" ]]; then
     log_line "网页自动登录失败(教学区): 无法获得 challenge -> ${res:-无响应}"
+    # v2.7.1 诊断: 记录服务器原始返回,用于精确定位
+    log_line "  [challenge原始返回] 入口=${portal_origin} 内容=${challenge:0:300}"
+    # v2.7.2 诊断: 记录 DNS 解析结果(排查注销后 DNS 劫持)
+    log_line "  [DNS解析] $(dscacheutil -q host -a name net.szu.edu.cn 2>/dev/null | grep ip_address | head -3 | tr '\n' ' ')"
     return 1
   fi
 
-  # ③④⑤ 按深澜协议构造加密参数(v1.0.1: ac_id 用动态获取值)
+  # ③④⑤ 按深澜协议构造加密参数(v2.8: ac_id 从实际门户入口抓取)
   local enc_pwd info chkstr ac_id
-  ac_id="$(teach_ac_id)"
+  ac_id="$(teach_ac_id "$portal_origin")"
   enc_pwd="$(sr_md5 "$pass" "$token")"
   info="{\"username\":\"${cid}\",\"password\":\"${pass}\",\"ip\":\"${ip_addr}\",\"acid\":\"${ac_id}\",\"enc_ver\":\"srun_bx1\"}"
   info="{SRBX1}$(sr_base64 $(sr_encode "$info" "$token"))"
   chkstr="$(sr_sha1 "${token}${cid}${token}${enc_pwd}${token}${ac_id}${token}${ip_addr}${token}200${token}1${token}${info}")"
 
-  # ⑥ 提交登录
+  # ⑥ 提交登录(v2.8: 与 challenge 同一门户入口)
   local resp
-  resp="$(curl -sk -m 8 -G "$SRUN_BASE/cgi-bin/srun_portal" \
+  resp="$(curl -sk -m 8 -G "$portal_origin/cgi-bin/srun_portal" \
     --data-urlencode "callback=$callback" \
     -d "action=login" \
     -d "username=${cid}" \
@@ -419,7 +468,11 @@ login_teach() {
     "")                            errmsg="无返回信息,可能认证系统已变更" ;;
     *)                             errmsg="$res" ;;
   esac
-  log_line "网页自动登录失败(教学区): ${errmsg}"
+  log_line "网页自动登录失败(教学区): ${errmsg} [本次ac_id=${ac_id}]"
+  # v2.7.1 诊断: 记录服务器原始返回中的 error_msg/error 字段
+  local srvmsg
+  srvmsg="$(echo "$resp" | grep -oE '"error(_msg)?":"[^"]*' | head -2 | cut -d'"' -f4 | tr '\n' ' ')"
+  log_line "  [login原始返回] ${srvmsg:-空} | resp头200字: ${resp:0:200}"
   return 1
 }
 
