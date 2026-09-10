@@ -120,10 +120,13 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 ## 🗑️ 卸载
 
 ```bash
+cd szu-net-autologin          # 你克隆项目的文件夹
 ./uninstall.sh
 ```
 
-会停止服务、删除所有文件,并询问是否连钥匙串凭据一起删除。
+会停止后台定时服务、删除所有安装文件,并**单独询问**是否连钥匙串里的账号密码一起删除(按 `y` 删,回车保留)。日志文件保留在 `~/Library/Logs/szu-autologin.log`,不需要可手动删除。
+
+> 若提示 `Permission denied`,先执行一次 `chmod +x uninstall.sh` 再运行(旧版本克隆的文件可能不带执行权限)。
 
 ## ⚠️ 已知坑(实战踩出来的,macOS 用户必读)
 
@@ -163,7 +166,6 @@ security add-generic-password -U -s szu-portal -a "新的6位卡号" -w "新密�
 
 ```bash
 cd szu-net-autologin          # 你克隆项目的文件夹
-chmod +x uninstall.sh         # 只需一次
 ./uninstall.sh
 ```
 
