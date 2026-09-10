@@ -157,6 +157,23 @@ security add-generic-password -U -s szu-portal -a "新的6位卡号" -w "新密�
 </details>
 
 <details>
+<summary>想卸载这个工具怎么办?</summary>
+
+进入项目文件夹,运行卸载程序:
+
+```bash
+cd szu-net-autologin          # 你克隆项目的文件夹
+chmod +x uninstall.sh         # 只需一次
+./uninstall.sh
+```
+
+它会自动:停止后台定时服务 → 删除 LaunchAgent 配置 → 删除脚本安装目录,最后**单独询问**是否连钥匙串里的账号密码一起删(按 `y` 删,回车保留)。日志文件保留在 `~/Library/Logs/szu-autologin.log`,不需要可手动删除。
+
+卸载后 Mac 恢复原生行为:合盖/断网后需要自己打开浏览器重新登录校园网。
+
+</details>
+
+<details>
 <summary>日志提示"账号或密码错误"?</summary>
 
 密码打错或改过密码。重新执行安装程序(或单跑 `security add-generic-password -U ...`),`-U` 参数会覆盖旧凭据。
