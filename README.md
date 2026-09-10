@@ -119,7 +119,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 
 ## 🗑️ 卸载(新手逐步教程)
 
-不想用了?按下面 4 步操作,全程约 1 分钟。所有命令都在「终端」App 里执行(按 `⌘ + 空格`,搜"终端"打开)。
+所有命令都在「终端」App 里执行(按 `⌘ + 空格`,搜"终端"打开)。
 
 **第 1 步:进入项目文件夹**
 
