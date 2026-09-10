@@ -11,7 +11,7 @@ KC_SERVICE="szu-portal"
 INSTALL_DIR="$HOME/Library/Application Support/SZUAutoLogin"
 PLIST_PATH="$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist"
 LOG_FILE="$HOME/Library/Logs/szu-autologin.log"
-INTERVAL=45                      # 检测间隔(秒)
+INTERVAL=15                      # 检测间隔(秒)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "==== szu-net-autologin 安装程序 ===="

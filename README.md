@@ -4,7 +4,7 @@
 
 合盖再开、睡眠唤醒、会话超时后,**无需打开浏览器、无需输入账号密码**,后台自动完成校园网网页认证,1 分钟内恢复上网。
 
-> 一句话原理:一个小脚本定期检查网络(默认 45 秒,可在 plist 中调快到 30 秒),发现掉线就替你向认证服务器"点一次登录按钮"——账号密码只存在你本机的钥匙串里。
+> 一句话原理:一个小脚本定期检查网络(默认 15 秒,可在 plist 中按需调整),发现掉线就替你向认证服务器"点一次登录按钮"——账号密码只存在你本机的钥匙串里。
 
 ---
 
@@ -26,7 +26,7 @@
 ## 🧭 工作原理
 
 ```
-launchd 定时器(每 45 秒)
+launchd 定时器(每 15 秒)
    └─> autologin.sh
          ├─ ① 认区:我现在在宿舍区还是教学区?
          │     三级判断(由快到慢):
@@ -75,7 +75,7 @@ mv "$HOME/Library/Application Support/SZUAutoLogin/config.example.sh" \
    "$HOME/Library/Application Support/SZUAutoLogin/config.sh"
 chmod +x "$HOME/Library/Application Support/SZUAutoLogin/autologin.sh"
 
-# ③ 注册定时服务(每 45 秒检测一次)
+# ③ 注册定时服务(每 15 秒检测一次)
 cp com.autologin.plist.template ~/Library/LaunchAgents/com.szu.autologin.plist  # 并按文件内注释修改路径
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 ```
@@ -101,7 +101,7 @@ security add-generic-password -U -s szu-portal -a "卡号" -w "新密码"
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 
-# 调整自查间隔(默认 45 秒;实测 15 秒开销仍可忽略,开机/唤醒恢复更快)
+# 调整自查间隔(默认 15 秒;若想更省电可调回 30~45 秒)
 plutil -replace StartInterval -integer 15 ~/Library/LaunchAgents/com.szu.autologin.plist
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
@@ -165,7 +165,7 @@ v1.1.0 起脚本失败时会把服务器原始返回、DNS 解析、本次使用
 <details>
 <summary>耗电吗?</summary>
 
-可忽略。每 45 秒一轮、每轮约 0.1~0.3 秒 CPU 轻载;合盖睡眠期间 launchd 定时器不会触发,零开销。
+可忽略。每 15 秒一轮、每轮约 0.1~0.3 秒 CPU 轻载;合盖睡眠期间 launchd 定时器不会触发,零开销。
 </details>
 
 ## 🔒 安全与隐私
@@ -185,6 +185,7 @@ v1.1.0 起脚本失败时会把服务器原始返回、DNS 解析、本次使用
 
 ## 📜 版本历史
 
+- **v1.1.2**(2026-09-10):默认自查间隔 45 → 15 秒(实测开销可忽略,开机/唤醒后联网更快;安装程序与 plist 模板同步)
 - **v1.1.1**(2026-09-10):补充自查间隔调优指引(15 秒实测开销可忽略,开机/唤醒恢复更快);plist 模板补充重载说明
 - **v1.1.0**(2026-09-09)
   - 修复教学区两个致命加密 bug:macOS LibreSSL `openssl md5/sha1` 输出无前缀导致取列得空、GNU 版 `expr` 不支持 `index` 导致 base64 映射失效(教学区登录失败的真凶);
