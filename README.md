@@ -117,16 +117,51 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 2026-09-08 17:15:03 网页自动登录成功(教学区)
 ```
 
-## 🗑️ 卸载
+## 🗑️ 卸载(新手逐步教程)
+
+不想用了?按下面 4 步操作,全程约 1 分钟。所有命令都在「终端」App 里执行(按 `⌘ + 空格`,搜"终端"打开)。
+
+**第 1 步:进入项目文件夹**
+
+就是当初 `git clone` 时下载的那个文件夹。如果你当时按 README 的默认做法下载到了主目录:
 
 ```bash
-cd szu-net-autologin          # 你克隆项目的文件夹
+cd ~/szu-net-autologin
+```
+
+> 不记得下载到哪了?在终端输入 `mdfind -name szu-net-autologin | head -5` 搜索,或用访达找到文件夹后,把它直接拖进终端窗口,路径会自动填上。
+
+**第 2 步:运行卸载程序**
+
+```bash
 ./uninstall.sh
 ```
 
-会停止后台定时服务、删除所有安装文件,并**单独询问**是否连钥匙串里的账号密码一起删除(按 `y` 删,回车保留)。日志文件保留在 `~/Library/Logs/szu-autologin.log`,不需要可手动删除。
+> 若提示 `Permission denied`,先执行 `chmod +x uninstall.sh` 再重试(旧版本克隆的文件可能不带执行权限)。
 
-> 若提示 `Permission denied`,先执行一次 `chmod +x uninstall.sh` 再运行(旧版本克隆的文件可能不带执行权限)。
+**第 3 步:决定要不要删除保存的账号密码**
+
+脚本最后会停下问:*"是否同时删除钥匙串中保存的校园网账号密码? [y/N]"*
+
+- 按 **`y`** 键:账号密码一起删干净(以后重装需重新输入)
+- 按**其他任意键**(如回车):凭据保留,以后重装无需再输(推荐)
+
+之后脚本会显示各步结果并提示 `==== 卸载完成 ====`。
+
+**第 4 步:确认卸载成功**
+
+终端出现类似 `卸载完成` 的提示即可。可顺手验证:
+
+```bash
+launchctl list | grep szu        # 无输出 = 后台服务已停止
+ls ~/Library/LaunchAgents/com.szu.autologin.plist 2>/dev/null   # 无输出 = 配置已删除
+```
+
+**卸载内容清单**:后台定时服务、LaunchAgent 配置(`~/Library/LaunchAgents/com.szu.autologin.plist`)、脚本安装目录(`~/Library/Application Support/SZUAutoLogin/`)、(可选)钥匙串凭据。
+
+**不会自动删的**:运行日志 `~/Library/Logs/szu-autologin.log`,不想要可手动删除;以及你 clone 下来的项目文件夹本身,直接拖进废纸篓即可。
+
+卸载后 Mac 恢复原生行为:合盖/断网后需要自己打开浏览器重新登录校园网。
 
 ## ⚠️ 已知坑(实战踩出来的,macOS 用户必读)
 
@@ -162,14 +197,7 @@ security add-generic-password -U -s szu-portal -a "新的6位卡号" -w "新密�
 <details>
 <summary>想卸载这个工具怎么办?</summary>
 
-进入项目文件夹,运行卸载程序:
-
-```bash
-cd szu-net-autologin          # 你克隆项目的文件夹
-./uninstall.sh
-```
-
-它会自动:停止后台定时服务 → 删除 LaunchAgent 配置 → 删除脚本安装目录,最后**单独询问**是否连钥匙串里的账号密码一起删(按 `y` 删,回车保留)。日志文件保留在 `~/Library/Logs/szu-autologin.log`,不需要可手动删除。
+见上方 [🗑️ 卸载(新手逐步教程)](#️-卸载新手逐步教程) 一节,4 步完成,约 1 分钟。
 
 卸载后 Mac 恢复原生行为:合盖/断网后需要自己打开浏览器重新登录校园网。
 
