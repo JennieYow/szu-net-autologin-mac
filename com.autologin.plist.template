@@ -8,6 +8,10 @@
     cp com.autologin.plist.template ~/Library/LaunchAgents/com.szu.autologin.plist
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
   注意: ProgramArguments 第一项必须是 /bin/bash(见 README"已知坑"第 5 条)。
+  StartInterval 默认 45 秒,可按需调小(实测 15 秒开销仍可忽略,开机/唤醒
+  恢复更快;不建议低于 10 秒)。改完需重载服务才会生效:
+    launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 -->
 <plist version="1.0">
 <dict>

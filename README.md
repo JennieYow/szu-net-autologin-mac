@@ -100,6 +100,11 @@ security add-generic-password -U -s szu-portal -a "卡号" -w "新密码"
 # 临时停用 / 恢复
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
+
+# 调整自查间隔(默认 45 秒;实测 15 秒开销仍可忽略,开机/唤醒恢复更快)
+plutil -replace StartInterval -integer 15 ~/Library/LaunchAgents/com.szu.autologin.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 ```
 
 成功时日志形如:
@@ -180,6 +185,7 @@ v1.1.0 起脚本失败时会把服务器原始返回、DNS 解析、本次使用
 
 ## 📜 版本历史
 
+- **v1.1.1**(2026-09-10):补充自查间隔调优指引(15 秒实测开销可忽略,开机/唤醒恢复更快);plist 模板补充重载说明
 - **v1.1.0**(2026-09-09)
   - 修复教学区两个致命加密 bug:macOS LibreSSL `openssl md5/sha1` 输出无前缀导致取列得空、GNU 版 `expr` 不支持 `index` 导致 base64 映射失效(教学区登录失败的真凶);
   - 教学区 ac_id 动态获取 + 兜底值修正(12 → 18);
