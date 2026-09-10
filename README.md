@@ -189,18 +189,6 @@ v1.1.0 起脚本失败时会把服务器原始返回、DNS 解析、本次使用
 - 仍无法定位 → 开 `DEBUG_NET=1` 抓几轮日志提 issue。
 </details>
 
-<details>
-<summary>插网线能用吗?</summary>
-
-可以。保持 `WIRED_MODE=1`(默认),未连 WiFi 但有网络连接时按宿舍区处理。
-</details>
-
-<details>
-<summary>耗电吗?</summary>
-
-可忽略。每 15 秒一轮、每轮约 0.1~0.3 秒 CPU 轻载;合盖睡眠期间 launchd 定时器不会触发,零开销。
-</details>
-
 ## 🔒 安全与隐私
 
 - 账号密码**只存本机钥匙串**,由 macOS 全盘加密保护;脚本、配置、日志中均无明文密码;
