@@ -97,8 +97,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 # 看实时日志(自动重连时会滚动显示)
 tail -f ~/Library/Logs/szu-autologin.log
 
-# 修改密码后重新保存凭据(覆盖旧的)
-security add-generic-password -U -s szu-portal -a "卡号" -w "新密码"
+# ⚠️ 修改校园网账号/密码后必做:重新保存凭据(覆盖旧的)
+security add-generic-password -U -s szu-portal -a "新卡号" -w "新密码"
 
 # 临时停用 / 恢复
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
@@ -141,6 +141,19 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 <summary>弹出"xxx 想访问钥匙串"怎么办?</summary>
 
 点「始终允许」。这是因为钥匙串条目的访问控制列表(ACL)里没有当前读取者,授权一次后即恢复正常。
+</details>
+
+<details>
+<summary>修改了校园网账号或密码怎么办?</summary>
+
+脚本不保存密码明文,凭据存在钥匙串里——所以**改密码后只需重新保存一次凭据**,不用重装:
+
+```bash
+security add-generic-password -U -s szu-portal -a "新的6位卡号" -w "新密码"
+```
+
+`-U` 表示覆盖旧条目。改完立即生效,下一轮检查就会用新凭据(账号换了也一样,改 `-a` 后面的卡号即可)。重跑一次 `install.sh` 也是等效的。
+
 </details>
 
 <details>
