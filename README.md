@@ -1,4 +1,4 @@
-# szu-net-autologin
+# szu-net-autologin-mac
 
 **macOS 校园网断网自动重连工具(深圳大学宿舍区 + 教学区双区适配)**
 
