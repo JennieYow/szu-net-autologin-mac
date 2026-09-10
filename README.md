@@ -117,7 +117,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.szu.autologin.plist
 2026-09-08 17:15:03 网页自动登录成功(教学区)
 ```
 
-## 🗑️ 卸载(新手逐步教程)
+## 🗑️ 卸载
 
 所有命令都在「终端」App 里执行(按 `⌘ + 空格`,搜"终端"打开)。
 
